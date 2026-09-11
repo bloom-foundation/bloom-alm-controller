@@ -23,7 +23,6 @@ import {ForeignControllerInit} from "../../deploy/ForeignControllerInit.sol";
 import {ALMProxy} from "../../src/ALMProxy.sol";
 import {ForeignController} from "../../src/ForeignController.sol";
 import {RateLimits} from "../../src/RateLimits.sol";
-import {RateLimitHelpers} from "../../src/RateLimitHelpers.sol";
 
 import {MyOFT} from "lib/devtools/examples/oft/contracts/MyOFT.sol";
 import {MyOFTAdapter} from "lib/devtools/examples/oft-adapter/contracts/MyOFTAdapter.sol";
