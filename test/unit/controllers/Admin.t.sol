@@ -481,7 +481,8 @@ contract ForeignControllerAdminTestBase is UnitTestBase {
             makeAddr("cctp"),
             makeAddr("pendleRouter"),
             makeAddr("uniswapV3Router"),
-            makeAddr("uniswapV3PositionManager")
+            makeAddr("uniswapV3PositionManager"),
+            makeAddr("midnight")
         );
     }
 }
@@ -1023,47 +1024,6 @@ contract ForeignControllerSetUniswapV3TwapSecondsAgoTests is ForeignControllerAd
 
 }
 
-contract ForeignControllerSetMidnightTests is ForeignControllerAdminTestBase {
-
-    event MidnightSet(address indexed midnight);
-
-    function test_setMidnight_unauthorizedAccount() public {
-        vm.expectRevert(abi.encodeWithSignature(
-            "AccessControlUnauthorizedAccount(address,bytes32)",
-            address(this),
-            DEFAULT_ADMIN_ROLE
-        ));
-        foreignController.setMidnight(makeAddr("midnight"));
-
-        vm.prank(freezer);
-        vm.expectRevert(abi.encodeWithSignature(
-            "AccessControlUnauthorizedAccount(address,bytes32)",
-            freezer,
-            DEFAULT_ADMIN_ROLE
-        ));
-        foreignController.setMidnight(makeAddr("midnight"));
-    }
-
-    function test_setMidnight() public {
-        assertEq(foreignController.midnight(), address(0));
-
-        vm.prank(admin);
-        vm.expectEmit(address(foreignController));
-        emit MidnightSet(makeAddr("midnight"));
-        foreignController.setMidnight(makeAddr("midnight"));
-
-        assertEq(foreignController.midnight(), makeAddr("midnight"));
-
-        vm.prank(admin);
-        vm.expectEmit(address(foreignController));
-        emit MidnightSet(makeAddr("midnight2"));
-        foreignController.setMidnight(makeAddr("midnight2"));
-
-        assertEq(foreignController.midnight(), makeAddr("midnight2"));
-    }
-
-}
-
 contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdminTestBase {
 
     event MidnightMarketConfigSet(
@@ -1074,14 +1034,7 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
         uint128 maxLossFactor
     );
 
-    address midnight = makeAddr("midnight");
-
-    function setUp() public override {
-        super.setUp();
-
-        vm.prank(admin);
-        foreignController.setMidnight(midnight);
-    }
+    address midnight = makeAddr("midnight");  // the constructor arg in the base setUp
 
     function _market() internal returns (Market memory market) {
         CollateralParams[] memory collateralParams = new CollateralParams[](1);
