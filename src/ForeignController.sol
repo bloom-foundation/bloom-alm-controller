@@ -72,6 +72,7 @@ contract ForeignController is AccessControl {
         uint32  maxContinuousFee,
         uint128 maxLossFactor
     );
+    event MidnightSet(address indexed midnight);
     event MintRecipientSet(uint32 indexed destinationDomain, bytes32 mintRecipient);
     event RelayerRemoved(address indexed relayer);
     event MerklDistributorSet(address indexed merklDistributor);
@@ -163,8 +164,7 @@ contract ForeignController is AccessControl {
         address cctp_,
         address pendleRouter_,
         address uniswapV3Router_,
-        address uniswapV3PositionManager_,
-        address midnight_
+        address uniswapV3PositionManager_
     ) {
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
 
@@ -176,7 +176,6 @@ contract ForeignController is AccessControl {
         pendleRouter             = pendleRouter_;
         uniswapV3Router          = ISwapRouter(uniswapV3Router_);
         uniswapV3PositionManager = INonfungiblePositionManager(uniswapV3PositionManager_);
-        midnight                 = midnight_;
     }
 
     /**********************************************************************************************/
@@ -302,13 +301,21 @@ contract ForeignController is AccessControl {
         emit MerklDistributorSet(merklDistributor_);
     }
 
+    function setMidnight(address midnight_)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        // Market ids commit to the Midnight address, so repointing only moves where entries are
+        // allowed; markets onboarded under the old venue keep their configs and stay exitable.
+        midnight = midnight_;
+        emit MidnightSet(midnight_);
+    }
+
     function setMidnightMarketConfig(Market memory market, MidnightLib.MarketConfig memory config)
         external
     {
         _checkRole(DEFAULT_ADMIN_ROLE);
 
-        // The venue is fixed at construction and is part of the id preimage, so this check alone
-        // guarantees every onboarded market lives on it.
         require(market.midnight == midnight,      "ForeignController/invalid-midnight");
         require(market.chainId  == block.chainid, "ForeignController/invalid-chain-id");
 
@@ -932,6 +939,9 @@ contract ForeignController is AccessControl {
 
         MidnightLib.TakeParams memory params =
             _midnightTakeParams(offers, ratifierData, units, maxAssetsIn);
+
+        // Entries are pinned to the current venue; exits are not, so a repoint cannot trap a position.
+        require(offers[0].market.midnight == midnight, "ForeignController/invalid-midnight");
 
         assetsSpent = MidnightLib.buy(params);
     }

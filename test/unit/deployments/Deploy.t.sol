@@ -19,7 +19,6 @@ contract ForeignControllerDeployTests is UnitTestBase {
         address pendleRouter             = makeAddr("pendleRouter");
         address uniswapV3Router          = makeAddr("uniswapV3Router");
         address uniswapV3PositionManager = makeAddr("uniswapV3PositionManager");
-        address midnight                 = makeAddr("midnight");
 
         address almProxy   = address(new ALMProxy(admin));
         address rateLimits = address(new RateLimits(admin));
@@ -34,8 +33,8 @@ contract ForeignControllerDeployTests is UnitTestBase {
                 cctp,
                 pendleRouter,
                 uniswapV3Router,
-                uniswapV3PositionManager,
-                midnight
+                uniswapV3PositionManager
+
             )
         );
 
@@ -47,7 +46,6 @@ contract ForeignControllerDeployTests is UnitTestBase {
         assertEq(address(controller.usdc()),         usdc);
         assertEq(address(controller.cctp()),         cctp);
         assertEq(address(controller.pendleRouter()), pendleRouter);
-        assertEq(address(controller.midnight()),     midnight);
     }
 
     function test_deployFull() public {
@@ -58,10 +56,9 @@ contract ForeignControllerDeployTests is UnitTestBase {
         address pendleRouter             = makeAddr("pendleRouter");
         address uniswapV3Router          = makeAddr("uniswapV3Router");
         address uniswapV3PositionManager = makeAddr("uniswapV3PositionManager");
-        address midnight                 = makeAddr("midnight");
 
         ControllerInstance memory instance
-            = ForeignControllerDeploy.deployFull(admin, psm, usdc, cctp, pendleRouter, uniswapV3Router, uniswapV3PositionManager, midnight);
+            = ForeignControllerDeploy.deployFull(admin, psm, usdc, cctp, pendleRouter, uniswapV3Router, uniswapV3PositionManager);
 
         ALMProxy          almProxy   = ALMProxy(payable(instance.almProxy));
         ForeignController controller = ForeignController(instance.controller);
@@ -79,7 +76,6 @@ contract ForeignControllerDeployTests is UnitTestBase {
         assertEq(address(controller.pendleRouter()),             pendleRouter);
         assertEq(address(controller.uniswapV3Router()),          uniswapV3Router);
         assertEq(address(controller.uniswapV3PositionManager()), uniswapV3PositionManager);
-        assertEq(address(controller.midnight()),                 midnight);
     }
 
 }

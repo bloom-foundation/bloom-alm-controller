@@ -39,21 +39,6 @@ contract LibraryWrapper {
 
 }
 
-// Just enough of the Midnight singleton for the init sanity checks.
-contract MockMidnight {
-
-    address public configurator;
-
-    constructor(address configurator_) {
-        configurator = configurator_;
-    }
-
-    function setConfigurator(address configurator_) external {
-        configurator = configurator_;
-    }
-
-}
-
 contract ForeignControllerInitAndUpgradeTestBase is ForkTestBase {
 
     uint32 constant destinationEndpointId   = 30101;  // Ethereum EID
@@ -84,8 +69,7 @@ contract ForeignControllerInitAndUpgradeTestBase is ForkTestBase {
             usdc                     : address(usdcBase),
             pendleRouter             : PENDLE_ROUTER_BASE,
             uniswapV3Router          : address(0xdeadbeef),
-            uniswapV3PositionManager : address(0xdeadbeef),
-            midnight                 : address(0)
+            uniswapV3PositionManager : address(0xdeadbeef)
         });
 
         mintRecipients = new Init.MintRecipient[](1);
@@ -149,8 +133,7 @@ contract ForeignControllerInitAndUpgradeFailureTest is ForeignControllerInitAndU
             cctp                     : GroveBase.CCTP_TOKEN_MESSENGER_V2,
             pendleRouter             : PENDLE_ROUTER_BASE,
             uniswapV3Router          : address(0xdeadbeef),
-            uniswapV3PositionManager : address(0xdeadbeef),
-            midnight                 : address(0)
+            uniswapV3PositionManager : address(0xdeadbeef)
         }));
 
         Init.MintRecipient[] memory mintRecipients_ = new Init.MintRecipient[](1);
@@ -271,30 +254,6 @@ contract ForeignControllerInitAndUpgradeFailureTest is ForeignControllerInitAndU
     }
 
     /**********************************************************************************************/
-    /*** Midnight tests                                                                         ***/
-    /**********************************************************************************************/
-
-    function test_initAlmSystem_upgradeController_incorrectMidnight() external {
-        checkAddresses.midnight = mismatchAddress;
-        _checkInitAndUpgradeFail(abi.encodePacked("ForeignControllerInit/incorrect-midnight"));
-    }
-
-    function test_initAlmSystem_upgradeController_midnightNotAContract() external {
-        _redeployControllerWithMidnight(mismatchAddress);  // an EOA
-        _checkInitAndUpgradeFail(abi.encodePacked("ForeignControllerInit/midnight-not-a-contract"));
-    }
-
-    function test_initAlmSystem_upgradeController_midnightNotConfigured() external {
-        MockMidnight midnight = new MockMidnight(address(0));
-
-        _redeployControllerWithMidnight(address(midnight));
-        _checkInitAndUpgradeFail(abi.encodePacked("ForeignControllerInit/midnight-not-configured"));
-
-        midnight.setConfigurator(makeAddr("configurator"));
-        _checkInitAndUpgradeSucceed();
-    }
-
-    /**********************************************************************************************/
     /*** PSM tests                                                                              ***/
     /**********************************************************************************************/
 
@@ -367,8 +326,7 @@ contract ForeignControllerInitAndUpgradeFailureTest is ForeignControllerInitAndU
             CCTP_MESSENGER_BASE,
             PENDLE_ROUTER_BASE,
             address(0xdeadbeef),
-            address(0xdeadbeef),
-            address(0)
+            address(0xdeadbeef)
         );
 
         checkAddresses.psm = address(psmBase);  // Overwrite to point to misconfigured PSM
@@ -397,8 +355,7 @@ contract ForeignControllerInitAndUpgradeFailureTest is ForeignControllerInitAndU
             CCTP_MESSENGER_BASE,
             PENDLE_ROUTER_BASE,
             address(0xdeadbeef),
-            address(0xdeadbeef),
-            address(0)
+            address(0xdeadbeef)
         );
 
         checkAddresses.psm = address(psmBase);  // Overwrite to point to misconfigured PSM
@@ -427,8 +384,7 @@ contract ForeignControllerInitAndUpgradeFailureTest is ForeignControllerInitAndU
             CCTP_MESSENGER_BASE,
             PENDLE_ROUTER_BASE,
             address(0xdeadbeef),
-            address(0xdeadbeef),
-            address(0)
+            address(0xdeadbeef)
         );
 
         checkAddresses.psm = address(psmBase);  // Overwrite to point to misconfigured PSM
@@ -497,24 +453,6 @@ contract ForeignControllerInitAndUpgradeFailureTest is ForeignControllerInitAndU
     /**********************************************************************************************/
     /*** Helper functions                                                                       ***/
     /**********************************************************************************************/
-
-    function _redeployControllerWithMidnight(address midnight) internal {
-        foreignController = ForeignController(ForeignControllerDeploy.deployController({
-            admin                    : Base.SPARK_EXECUTOR,
-            almProxy                 : address(almProxy),
-            rateLimits               : address(rateLimits),
-            psm                      : address(psmBase),
-            usdc                     : address(usdcBase),
-            cctp                     : GroveBase.CCTP_TOKEN_MESSENGER_V2,
-            pendleRouter             : PENDLE_ROUTER_BASE,
-            uniswapV3Router          : address(0xdeadbeef),
-            uniswapV3PositionManager : address(0xdeadbeef),
-            midnight                 : midnight
-        }));
-
-        controllerInst.controller = address(foreignController);
-        checkAddresses.midnight   = midnight;
-    }
 
     function _checkInitAndUpgradeFail(bytes memory expectedError) internal {
         vm.expectRevert(expectedError);
@@ -588,8 +526,7 @@ contract ForeignControllerInitAlmSystemSuccessTests is ForeignControllerInitAndU
             GroveBase.CCTP_TOKEN_MESSENGER_V2,
             PENDLE_ROUTER_BASE,
             address(0xdeadbeef),
-            address(0xdeadbeef),
-            address(0)
+            address(0xdeadbeef)
         );
 
         // Overwrite storage for all previous deployments in setUp and assert brand new deployment
@@ -706,8 +643,7 @@ contract ForeignControllerUpgradeControllerSuccessTests is ForeignControllerInit
             cctp                     : GroveBase.CCTP_TOKEN_MESSENGER_V2,
             pendleRouter             : PENDLE_ROUTER_BASE,
             uniswapV3Router          : address(0xdeadbeef),
-            uniswapV3PositionManager : address(0xdeadbeef),
-            midnight                 : address(0)
+            uniswapV3PositionManager : address(0xdeadbeef)
         }));
 
         controllerInst = ControllerInstance({

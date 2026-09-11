@@ -117,8 +117,7 @@ contract ForkTestBase is Test {
             cctp                     : CCTP_TOKEN_MESSENGER,
             pendleRouter             : address(0), // No Pendle Router on Avalanche
             uniswapV3Router          : UNISWAP_V3_ROUTER,
-            uniswapV3PositionManager : UNISWAP_V3_POSITION_MANAGER,
-            midnight                 : address(0)
+            uniswapV3PositionManager : UNISWAP_V3_POSITION_MANAGER
         });
 
         almProxy          = ALMProxy(payable(controllerInst.almProxy));
@@ -147,8 +146,7 @@ contract ForkTestBase is Test {
             usdc                     : USDC_AVALANCHE,
             pendleRouter             : address(0), // No Pendle Router on Avalanche
             uniswapV3Router          : UNISWAP_V3_ROUTER,
-            uniswapV3PositionManager : UNISWAP_V3_POSITION_MANAGER,
-            midnight                 : address(0)
+            uniswapV3PositionManager : UNISWAP_V3_POSITION_MANAGER
         });
 
         Init.MintRecipient[] memory mintRecipients = new Init.MintRecipient[](1);

@@ -19,8 +19,7 @@ library ForeignControllerDeploy {
         address cctp,
         address pendleRouter,
         address uniswapV3Router,
-        address uniswapV3PositionManager,
-        address midnight
+        address uniswapV3PositionManager
     )
         internal returns (address controller)
     {
@@ -33,8 +32,7 @@ library ForeignControllerDeploy {
             cctp_                     : cctp,
             pendleRouter_             : pendleRouter,
             uniswapV3Router_          : uniswapV3Router,
-            uniswapV3PositionManager_ : uniswapV3PositionManager,
-            midnight_                 : midnight
+            uniswapV3PositionManager_ : uniswapV3PositionManager
         }));
     }
 
@@ -45,8 +43,7 @@ library ForeignControllerDeploy {
         address cctp,
         address pendleRouter,
         address uniswapV3Router,
-        address uniswapV3PositionManager,
-        address midnight
+        address uniswapV3PositionManager
     )
         internal returns (ControllerInstance memory instance)
     {
@@ -62,8 +59,7 @@ library ForeignControllerDeploy {
             cctp_                     : cctp,
             pendleRouter_             : pendleRouter,
             uniswapV3Router_          : uniswapV3Router,
-            uniswapV3PositionManager_ : uniswapV3PositionManager,
-            midnight_                 : midnight
+            uniswapV3PositionManager_ : uniswapV3PositionManager
         }));
     }
 

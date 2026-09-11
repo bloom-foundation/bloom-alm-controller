@@ -61,7 +61,6 @@ contract ForeignControllerConstructorTests is UnitTestBase {
     address pendleRouter             = makeAddr("pendleRouter");
     address uniswapV3Router          = makeAddr("uniswapV3Router");
     address uniswapV3PositionManager = makeAddr("uniswapV3PositionManager");
-    address midnight                 = makeAddr("midnight");
 
     function test_constructor() public {
         ForeignController foreignController = new ForeignController(
@@ -73,8 +72,7 @@ contract ForeignControllerConstructorTests is UnitTestBase {
             cctp,
             pendleRouter,
             uniswapV3Router,
-            uniswapV3PositionManager,
-            midnight
+            uniswapV3PositionManager
         );
 
         assertEq(foreignController.hasRole(DEFAULT_ADMIN_ROLE, admin), true);
@@ -87,7 +85,6 @@ contract ForeignControllerConstructorTests is UnitTestBase {
         assertEq(address(foreignController.pendleRouter()),             pendleRouter);
         assertEq(address(foreignController.uniswapV3Router()),          uniswapV3Router);
         assertEq(address(foreignController.uniswapV3PositionManager()), uniswapV3PositionManager);
-        assertEq(address(foreignController.midnight()),                 midnight);
     }
 
 }
