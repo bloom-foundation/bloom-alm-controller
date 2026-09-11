@@ -72,7 +72,7 @@ contract MockOracle {
 
 contract MidnightTestBase is ForkTestBase {
 
-    address constant MIDNIGHT = 0xAdedD8ab6dE832766Fedf0FaC4992E5C4D3EA18A;
+    address constant MIDNIGHT = MIDNIGHT_BASE;
 
     // Both already enabled on the Base singleton at the fork block.
     uint256 constant LLTV               = 0.86e18;
@@ -176,8 +176,6 @@ contract MidnightTestBase is ForkTestBase {
         rateLimits.setRateLimitData(sellKey,   5_000_000 * loanUnit, (1_000_000 * loanUnit) / 1 days);
         rateLimits.setRateLimitData(redeemKey, 5_000_000 * loanUnit, (1_000_000 * loanUnit) / 1 days);
 
-        foreignController.setMidnight(MIDNIGHT);
-
         foreignController.setMidnightMarketConfig(
             market,
             MidnightLib.MarketConfig({
@@ -251,6 +249,14 @@ contract MidnightTestBase is ForkTestBase {
         uint256 price = MidnightTickLib.tickToPrice(tick) - _settlementFee();
 
         return units * price / 1e18;
+    }
+
+    // What the maker receives when it is the seller: the offer price, rounded up, no fee (the fee
+    // is added on the buyer's side).
+    function _makerSellerAssets(uint256 units, uint256 tick) internal pure returns (uint256) {
+        uint256 price = MidnightTickLib.tickToPrice(tick);
+
+        return (units * price + 1e18 - 1) / 1e18;
     }
 
     function _setFees(uint256 settlementFeeIndex, uint256 settlementFee_, uint256 continuousFee_) internal {
@@ -466,15 +472,27 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
         vm.expectRevert("MidnightLib/invalid-offer-receiver");
         _buy(offer, 1e18, 1e18);
 
-        // Any other receiver is the maker's business; the spend is still measured in full.
+        // Any other receiver is the maker's business; the spend is still measured in full. With a fee
+        // on, the maker gets the bare offer price and the proxy pays price plus fee.
+        _setFees(5, 0.0025e18, 0);
+
+        uint256 units    = 1_234.567e18;
+        uint256 expected = _buyerAssets(units, TICK_98);
+        uint256 toMaker  = _makerSellerAssets(units, TICK_98);
+
+        assertGt(expected - toMaker, 0);
+
         address receiver = makeAddr("receiver");
+
+        offer = _offer(false, TICK_98, uint128(units));
         offer.receiverIfMakerIsSeller = receiver;
 
-        uint256 expected = _buyerAssets(1e18, TICK_98);
+        uint256 feeBefore = loanToken.balanceOf(MIDNIGHT);
 
-        assertEq(_buy(offer, 1e18, expected),           expected);
-        assertEq(loanToken.balanceOf(receiver),         _sellerAssets(1e18, TICK_98));
-        assertEq(rateLimits.getCurrentRateLimit(buyKey), 5_000_000e18 - expected);
+        assertEq(_buy(offer, units, expected),            expected);
+        assertEq(loanToken.balanceOf(receiver),           toMaker);
+        assertEq(loanToken.balanceOf(MIDNIGHT) - feeBefore, expected - toMaker);
+        assertEq(rateLimits.getCurrentRateLimit(buyKey),  5_000_000e18 - expected);
     }
 
     // Onboarding does not consult the singleton, so a market nobody has touched yet can be configured
@@ -1187,6 +1205,8 @@ contract HostileCallback {
     bool public authorized;
     bool public repaid;
 
+    uint256 public allowanceSeen;  // the proxy's live approval at the time of the callback
+
     constructor(address midnight_) {
         midnight = midnight_;
     }
@@ -1209,6 +1229,8 @@ contract HostileCallback {
     {
         (address proxy, Offer memory attackOffer, uint256 units) =
             abi.decode(data, (address, Offer, uint256));
+
+        allowanceSeen = IERC20(market.loanToken).allowance(proxy, midnight);
 
         // Spend the approval still open for the rest of the batch, via an offer the proxy makes.
         try IMidnight(midnight).take(attackOffer, "", units, address(this), address(0), address(0), "") {
@@ -1279,7 +1301,11 @@ contract ForeignControllerMidnightCallbackTests is MidnightTestBase {
 
         uint256 balanceBefore = loanToken.balanceOf(address(almProxy));
 
-        assertEq(_buy(offer, units, expected), expected);
+        // A bound above the fill leaves a live approval open while the callback runs; the exact
+        // bound would be spent before `onSell` and make the `take` leg fail on allowance alone.
+        assertEq(_buy(offer, units, type(uint256).max), expected);
+
+        assertGt(hostile.allowanceSeen(), _buyerAssets(units, TICK_98));
 
         assertFalse(hostile.tookOffer());
         assertFalse(hostile.withdrew());
@@ -1428,53 +1454,6 @@ contract ForeignControllerMidnightMidBatchSlashTests is MidnightTestBase {
         assertEq(_credit(),                       creditBefore);
         assertEq(midnight.lossFactor(marketId),   0);
         assertEq(midnight.debt(marketId, victim), VICTIM_UNITS);
-    }
-
-}
-
-contract ForeignControllerMidnightRepointTests is MidnightTestBase {
-
-    uint256 constant SEEDED_UNITS = 1_000_000e18;
-
-    function setUp() public override {
-        super.setUp();
-
-        _seedCredit(SEEDED_UNITS);
-
-        vm.prank(GROVE_EXECUTOR);
-        foreignController.setMidnight(makeAddr("midnight2"));
-    }
-
-    // Repointing the venue closes entries into the old one but never traps what is already there.
-    function test_midnightRepoint_entriesClosedExitsOpen() public {
-        vm.expectRevert("ForeignController/invalid-midnight");
-        _buy(_offer(false, TICK_98, 1e18), 1e18, 1e18);
-
-        uint256 sold     = SEEDED_UNITS / 2;
-        uint256 expected = _sellerAssets(sold, TICK_99);
-
-        assertEq(_sell(_offer(true, TICK_99, uint128(sold)), sold, expected), expected);
-
-        _repay(SEEDED_UNITS - sold);
-
-        assertEq(_redeem(SEEDED_UNITS - sold, SEEDED_UNITS - sold), SEEDED_UNITS - sold);
-
-        assertEq(_credit(), 0);
-    }
-
-    // The setter only takes markets on the current venue, so the old configs are frozen as they are.
-    function test_midnightRepoint_oldConfigIsFrozen() public {
-        vm.prank(GROVE_EXECUTOR);
-        vm.expectRevert("ForeignController/invalid-midnight");
-        foreignController.setMidnightMarketConfig(
-            market,
-            MidnightLib.MarketConfig(0, TICK_98, MidnightLib.MAX_CONTINUOUS_FEE, 0)
-        );
-
-        ( uint16 maxBuyTick, uint16 minSellTick, , ) = foreignController.midnightMarketConfigs(marketId);
-
-        assertEq(maxBuyTick,  TICK_99);
-        assertEq(minSellTick, TICK_98);
     }
 
 }
