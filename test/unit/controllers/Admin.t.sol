@@ -6,9 +6,6 @@ import { MainnetController } from "../../../src/MainnetController.sol";
 import { MidnightLib }       from "../../../src/libraries/MidnightLib.sol";
 import { UniswapV3Lib }      from "../../../src/libraries/UniswapV3Lib.sol";
 
-import { CollateralParams, Market } from "../../../src/interfaces/MidnightInterfaces.sol";
-
-import { MidnightIdLib }                 from "../../../src/libraries/midnight/MidnightIdLib.sol";
 import { MAX_TICK as MIDNIGHT_MAX_TICK } from "../../../src/libraries/midnight/MidnightTickLib.sol";
 
 import { MockDaiUsds } from "../mocks/MockDaiUsds.sol";
@@ -1074,36 +1071,8 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
         uint128 maxLossFactor
     );
 
-    address midnight = makeAddr("midnight");
-
-    function setUp() public override {
-        super.setUp();
-
-        vm.prank(admin);
-        foreignController.setMidnight(midnight);
-    }
-
-    function _market() internal returns (Market memory market) {
-        CollateralParams[] memory collateralParams = new CollateralParams[](1);
-
-        collateralParams[0] = CollateralParams({
-            token             : makeAddr("collateral"),
-            lltv              : 0.86e18,
-            liquidationCursor : 0.3e18,
-            oracle            : makeAddr("oracle")
-        });
-
-        market = Market({
-            chainId          : block.chainid,
-            midnight         : midnight,
-            loanToken        : makeAddr("loanToken"),
-            collateralParams : collateralParams,
-            maturity         : block.timestamp + 180 days,
-            rcfThreshold     : 0,
-            enterGate        : address(0),
-            liquidatorGate   : address(0)
-        });
-    }
+    // The setter is keyed by id; Midnight itself rejects markets for another chain or venue.
+    bytes32 marketId = keccak256("market");
 
     function _config(uint16 maxBuyTick, uint16 minSellTick, uint32 maxContinuousFee)
         internal pure returns (MidnightLib.MarketConfig memory)
@@ -1133,7 +1102,7 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
             address(this),
             DEFAULT_ADMIN_ROLE
         ));
-        foreignController.setMidnightMarketConfig(_market(), _config(4000, 3000, 0));
+        foreignController.setMidnightMarketConfig(marketId, _config(4000, 3000, 0));
 
         vm.prank(freezer);
         vm.expectRevert(abi.encodeWithSignature(
@@ -1141,32 +1110,14 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
             freezer,
             DEFAULT_ADMIN_ROLE
         ));
-        foreignController.setMidnightMarketConfig(_market(), _config(4000, 3000, 0));
-    }
-
-    function test_setMidnightMarketConfig_invalidMidnight() public {
-        Market memory market = _market();
-        market.midnight = makeAddr("otherMidnight");
-
-        vm.prank(admin);
-        vm.expectRevert("ForeignController/invalid-midnight");
-        foreignController.setMidnightMarketConfig(market, _config(4000, 3000, 0));
-    }
-
-    function test_setMidnightMarketConfig_invalidChainId() public {
-        Market memory market = _market();
-        market.chainId = block.chainid + 1;
-
-        vm.prank(admin);
-        vm.expectRevert("ForeignController/invalid-chain-id");
-        foreignController.setMidnightMarketConfig(market, _config(4000, 3000, 0));
+        foreignController.setMidnightMarketConfig(marketId, _config(4000, 3000, 0));
     }
 
     function test_setMidnightMarketConfig_maxBuyTickOutOfBounds() public {
         vm.prank(admin);
         vm.expectRevert("ForeignController/max-buy-tick-out-of-bounds");
         foreignController.setMidnightMarketConfig(
-            _market(),
+            marketId,
             _config(uint16(MIDNIGHT_MAX_TICK + 1), 3000, 0)
         );
     }
@@ -1175,11 +1126,11 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
         vm.startPrank(admin);
 
         vm.expectRevert("ForeignController/min-sell-tick-out-of-bounds");
-        foreignController.setMidnightMarketConfig(_market(), _config(4000, 0, 0));
+        foreignController.setMidnightMarketConfig(marketId, _config(4000, 0, 0));
 
         vm.expectRevert("ForeignController/min-sell-tick-out-of-bounds");
         foreignController.setMidnightMarketConfig(
-            _market(),
+            marketId,
             _config(4000, uint16(MIDNIGHT_MAX_TICK + 1), 0)
         );
 
@@ -1190,15 +1141,12 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
         vm.prank(admin);
         vm.expectRevert("ForeignController/max-continuous-fee-out-of-bounds");
         foreignController.setMidnightMarketConfig(
-            _market(),
+            marketId,
             _config(4000, 3000, MidnightLib.MAX_CONTINUOUS_FEE + 1)
         );
     }
 
     function test_setMidnightMarketConfig() public {
-        Market memory market   = _market();
-        bytes32       marketId = MidnightIdLib.toId(market);
-
         (
             uint16  maxBuyTick,
             uint16  minSellTick,
@@ -1214,7 +1162,7 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
         vm.prank(admin);
         vm.expectEmit(address(foreignController));
         emit MidnightMarketConfigSet(marketId, 4000, 3000, 100, 1e18);
-        foreignController.setMidnightMarketConfig(market, _config(4000, 3000, 100, 1e18));
+        foreignController.setMidnightMarketConfig(marketId, _config(4000, 3000, 100, 1e18));
 
         ( maxBuyTick, minSellTick, maxContinuousFee, maxLossFactor )
             = foreignController.midnightMarketConfigs(marketId);
@@ -1223,6 +1171,15 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
         assertEq(minSellTick,      3000);
         assertEq(maxContinuousFee, 100);
         assertEq(maxLossFactor,    1e18);
+
+        // Another id is untouched.
+        ( maxBuyTick, minSellTick, maxContinuousFee, maxLossFactor )
+            = foreignController.midnightMarketConfigs(keccak256("otherMarket"));
+
+        assertEq(maxBuyTick,       0);
+        assertEq(minSellTick,      0);
+        assertEq(maxContinuousFee, 0);
+        assertEq(maxLossFactor,    0);
 
         // A zero maxBuyTick disables entry, the exit floor stays in place, and any loss factor is legal.
         vm.prank(admin);
@@ -1235,7 +1192,7 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
             type(uint128).max
         );
         foreignController.setMidnightMarketConfig(
-            market,
+            marketId,
             _config(0, uint16(MIDNIGHT_MAX_TICK), MidnightLib.MAX_CONTINUOUS_FEE, type(uint128).max)
         );
 
@@ -1246,22 +1203,6 @@ contract ForeignControllerSetMidnightMarketConfigTests is ForeignControllerAdmin
         assertEq(minSellTick,      MIDNIGHT_MAX_TICK);
         assertEq(maxContinuousFee, MidnightLib.MAX_CONTINUOUS_FEE);
         assertEq(maxLossFactor,    type(uint128).max);
-    }
-
-    // The id commits to the whole market config, so a different market cannot pick up this config.
-    function test_setMidnightMarketConfig_idIsMarketSpecific() public {
-        Market memory market = _market();
-
-        vm.prank(admin);
-        foreignController.setMidnightMarketConfig(market, _config(4000, 3000, 0));
-
-        Market memory otherMarket = market;
-        otherMarket.maturity = market.maturity + 1;
-
-        ( uint16 maxBuyTick, , , )
-            = foreignController.midnightMarketConfigs(MidnightIdLib.toId(otherMarket));
-
-        assertEq(maxBuyTick, 0);
     }
 
 }

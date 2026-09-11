@@ -16,7 +16,7 @@ import { IPSM3 } from "spark-psm/src/interfaces/IPSM3.sol";
 import { IALMProxy }     from "./interfaces/IALMProxy.sol";
 import { ICCTPLike }     from "./interfaces/CCTPInterfaces.sol";
 import { IRateLimits }   from "./interfaces/IRateLimits.sol";
-import { Market, Offer } from "./interfaces/MidnightInterfaces.sol";
+import { Offer }         from "./interfaces/MidnightInterfaces.sol";
 import { IPendleMarket } from "./interfaces/PendleInterfaces.sol";
 
 import { AaveV4Lib }    from "./libraries/AaveV4Lib.sol";
@@ -28,7 +28,6 @@ import { CCTPLib }      from "./libraries/CCTPLib.sol";
 import { ERC20Lib }     from "./libraries/common/ERC20Lib.sol";
 import { UniswapV3Lib } from "./libraries/UniswapV3Lib.sol";
 
-import { MidnightIdLib }                 from "./libraries/midnight/MidnightIdLib.sol";
 import { MAX_TICK as MIDNIGHT_MAX_TICK } from "./libraries/midnight/MidnightTickLib.sol";
 
 import { ISwapRouter, INonfungiblePositionManager }                    from "./interfaces/UniswapV3Interfaces.sol";
@@ -138,7 +137,6 @@ contract ForeignController is AccessControl {
     mapping(address pool => uint256 maxSlippage)                     public maxSlippages;  // 1e18 precision
     mapping(address pool => UniswapV3Lib.UniswapV3PoolParams params) public uniswapV3PoolParams;
 
-    // Keyed by Midnight market id, which commits to the whole market, chain id and venue included.
     mapping(bytes32 marketId => MidnightLib.MarketConfig config) public midnightMarketConfigs;
 
     mapping(address spoke => mapping(uint256 reserveId => uint256 maxSlippage)) public maxAaveV4Slippages;  // 1e18 precision
@@ -311,13 +309,10 @@ contract ForeignController is AccessControl {
         emit MidnightSet(midnight_);
     }
 
-    function setMidnightMarketConfig(Market memory market, MidnightLib.MarketConfig memory config)
+    function setMidnightMarketConfig(bytes32 marketId, MidnightLib.MarketConfig memory config)
         external
     {
         _checkRole(DEFAULT_ADMIN_ROLE);
-
-        require(market.midnight == midnight,      "ForeignController/invalid-midnight");
-        require(market.chainId  == block.chainid, "ForeignController/invalid-chain-id");
 
         // A zero maxBuyTick is the kill switch: it blocks new entries, including into resting offers.
         require(
@@ -336,8 +331,6 @@ contract ForeignController is AccessControl {
             config.maxContinuousFee <= MidnightLib.MAX_CONTINUOUS_FEE,
             "ForeignController/max-continuous-fee-out-of-bounds"
         );
-
-        bytes32 marketId = MidnightIdLib.toId(market);
 
         midnightMarketConfigs[marketId] = config;
 
@@ -926,8 +919,10 @@ contract ForeignController is AccessControl {
     /**********************************************************************************************/
 
     // NOTE: A brand new market has to be touched once on Midnight, by anyone, before it trades here.
+    //       `marketId` selects the onboarded config; the library checks every offer against it.
 
     function buyMidnight(
+        bytes32   marketId,
         Offer[]   memory offers,
         bytes[]   memory ratifierData,
         uint256[] memory units,
@@ -937,16 +932,13 @@ contract ForeignController is AccessControl {
     {
         _checkRole(RELAYER);
 
-        MidnightLib.TakeParams memory params =
-            _midnightTakeParams(offers, ratifierData, units, maxAssetsIn);
-
-        // Entries are pinned to the current venue; exits are not, so a repoint cannot trap a position.
-        require(offers[0].market.midnight == midnight, "ForeignController/invalid-midnight");
-
-        assetsSpent = MidnightLib.buy(params);
+        assetsSpent = MidnightLib.buy(
+            _midnightTakeParams(marketId, offers, ratifierData, units, maxAssetsIn)
+        );
     }
 
     function sellMidnight(
+        bytes32   marketId,
         Offer[]   memory offers,
         bytes[]   memory ratifierData,
         uint256[] memory units,
@@ -957,18 +949,16 @@ contract ForeignController is AccessControl {
         _checkRole(RELAYER);
 
         assetsReceived = MidnightLib.sell(
-            _midnightTakeParams(offers, ratifierData, units, minAssetsOut)
+            _midnightTakeParams(marketId, offers, ratifierData, units, minAssetsOut)
         );
     }
 
-    function redeemMidnight(Market memory market, uint256 units, uint256 minAssetsOut)
+    function redeemMidnight(bytes32 marketId, uint256 units, uint256 minAssetsOut)
         external returns (uint256 assetsWithdrawn)
     {
         _checkRole(RELAYER);
 
         // Redemption reads no config value, but an onboarded config is what authenticates the market.
-        bytes32 marketId = MidnightIdLib.toId(market);
-
         require(
             midnightMarketConfigs[marketId].minSellTick != 0,
             "ForeignController/market-not-onboarded"
@@ -977,10 +967,10 @@ contract ForeignController is AccessControl {
         assetsWithdrawn = MidnightLib.redeem(MidnightLib.RedeemParams({
             proxy             : proxy,
             rateLimits        : rateLimits,
+            midnight          : midnight,
             buyRateLimitId    : LIMIT_MIDNIGHT_BUY,
             redeemRateLimitId : LIMIT_MIDNIGHT_REDEEM,
             marketId          : marketId,
-            market            : market,
             units             : units,
             minAssetsOut      : minAssetsOut
         }));
@@ -1117,6 +1107,7 @@ contract ForeignController is AccessControl {
     }
 
     function _midnightTakeParams(
+        bytes32   marketId,
         Offer[]   memory offers,
         bytes[]   memory ratifierData,
         uint256[] memory units,
@@ -1124,14 +1115,10 @@ contract ForeignController is AccessControl {
     )
         internal view returns (MidnightLib.TakeParams memory)
     {
-        require(offers.length != 0, "ForeignController/empty-batch");
-
-        // The library binds every offer in the batch to this id, so one config covers the whole batch.
-        bytes32 marketId = MidnightIdLib.toId(offers[0].market);
-
         return MidnightLib.TakeParams({
             proxy           : proxy,
             rateLimits      : rateLimits,
+            midnight        : midnight,
             buyRateLimitId  : LIMIT_MIDNIGHT_BUY,
             sellRateLimitId : LIMIT_MIDNIGHT_SELL,
             marketId        : marketId,

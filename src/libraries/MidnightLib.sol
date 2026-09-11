@@ -3,13 +3,11 @@ pragma solidity ^0.8.21;
 
 import { IERC20 } from "openzeppelin-contracts/contracts/interfaces/IERC20.sol";
 
-import { IALMProxy }   from "../interfaces/IALMProxy.sol";
-import { IRateLimits } from "../interfaces/IRateLimits.sol";
-
+import { IALMProxy }                from "../interfaces/IALMProxy.sol";
+import { IRateLimits }              from "../interfaces/IRateLimits.sol";
 import { IMidnight, Market, Offer } from "../interfaces/MidnightInterfaces.sol";
 
-import { ERC20Lib } from "./common/ERC20Lib.sol";
-
+import { ERC20Lib }        from "./common/ERC20Lib.sol";
 import { MidnightIdLib }   from "./midnight/MidnightIdLib.sol";
 import { MidnightTickLib } from "./midnight/MidnightTickLib.sol";
 
@@ -41,6 +39,7 @@ library MidnightLib {
     struct TakeParams {
         IALMProxy    proxy;
         IRateLimits  rateLimits;
+        address      midnight;  // Venue entries are pinned to; the market id itself authenticates exits.
         bytes32      buyRateLimitId;
         bytes32      sellRateLimitId;
         bytes32      marketId;
@@ -54,10 +53,10 @@ library MidnightLib {
     struct RedeemParams {
         IALMProxy   proxy;
         IRateLimits rateLimits;
+        address     midnight;
         bytes32     buyRateLimitId;
         bytes32     redeemRateLimitId;
         bytes32     marketId;
-        Market      market;
         uint256     units;
         uint256     minAssetsOut;
     }
@@ -66,7 +65,6 @@ library MidnightLib {
     /*** Taker functions                                                                        ***/
     /**********************************************************************************************/
 
-    // NOTE: !!! Rate limited at end of function !!!
     function buy(TakeParams memory params) external returns (uint256 assetsSpent) {
         require(params.config.maxBuyTick != 0, "MidnightLib/buy-not-enabled");
         require(params.assetsBound != 0,       "MidnightLib/max-assets-in-not-set");
@@ -74,6 +72,9 @@ library MidnightLib {
         _validateBatch(params);
 
         Market memory market = params.offers[0].market;
+
+        // Entries are pinned to the configured venue; exits are not, so a repoint cannot trap a position.
+        require(market.midnight == params.midnight, "MidnightLib/invalid-midnight");
 
         // Entering crystallizes the continuous fee over the remaining term, so it is checked up front.
         require(
@@ -126,7 +127,6 @@ library MidnightLib {
         );
     }
 
-    // NOTE: !!! Rate limited at end of function !!!
     function sell(TakeParams memory params) external returns (uint256 assetsReceived) {
         require(params.config.minSellTick != 0, "MidnightLib/sell-not-enabled");
         require(params.assetsBound != 0,        "MidnightLib/min-assets-out-not-set");
@@ -164,10 +164,9 @@ library MidnightLib {
         _restoreBuyLimit(params.rateLimits, params.buyRateLimitId, params.marketId, assetsReceived);
     }
 
-    // NOTE: !!! Rate limited at end of function !!!
     function redeem(RedeemParams memory params) external returns (uint256 assetsWithdrawn) {
-        Market memory market   = params.market;
         bytes32       marketId = params.marketId;
+        Market memory market   = IMidnight(params.midnight).toMarket(marketId);
 
         // Redemption is at par out of repayments, so units are capped by both sides of the pool.
         uint256 units        = params.units;

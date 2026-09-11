@@ -179,7 +179,7 @@ contract MidnightTestBase is ForkTestBase {
         foreignController.setMidnight(MIDNIGHT);
 
         foreignController.setMidnightMarketConfig(
-            market,
+            marketId,
             MidnightLib.MarketConfig({
                 maxBuyTick       : TICK_99,
                 minSellTick      : TICK_98,
@@ -279,7 +279,7 @@ contract MidnightTestBase is ForkTestBase {
         ) = _batch(offer, units);
 
         vm.prank(ALM_RELAYER);
-        return foreignController.buyMidnight(offers, ratifierData, unitsArray, maxAssetsIn);
+        return foreignController.buyMidnight(marketId, offers, ratifierData, unitsArray, maxAssetsIn);
     }
 
     function _sell(Offer memory offer, uint256 units, uint256 minAssetsOut) internal returns (uint256) {
@@ -290,7 +290,7 @@ contract MidnightTestBase is ForkTestBase {
         ) = _batch(offer, units);
 
         vm.prank(ALM_RELAYER);
-        return foreignController.sellMidnight(offers, ratifierData, unitsArray, minAssetsOut);
+        return foreignController.sellMidnight(marketId, offers, ratifierData, unitsArray, minAssetsOut);
     }
 
     function _credit() internal view returns (uint256 credit) {
@@ -311,7 +311,7 @@ contract MidnightTestBase is ForkTestBase {
     {
         vm.prank(GROVE_EXECUTOR);
         foreignController.setMidnightMarketConfig(
-            market,
+            marketId,
             MidnightLib.MarketConfig({
                 maxBuyTick       : maxBuyTick,
                 minSellTick      : minSellTick,
@@ -333,7 +333,7 @@ contract MidnightTestBase is ForkTestBase {
 
     function _redeem(uint256 units, uint256 minAssetsOut) internal returns (uint256) {
         vm.prank(ALM_RELAYER);
-        return foreignController.redeemMidnight(market, units, minAssetsOut);
+        return foreignController.redeemMidnight(marketId, units, minAssetsOut);
     }
 
 }
@@ -352,13 +352,13 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
             address(this),
             RELAYER
         ));
-        foreignController.buyMidnight(offers, ratifierData, units, 1e18);
+        foreignController.buyMidnight(marketId, offers, ratifierData, units, 1e18);
     }
 
     function test_buyMidnight_emptyBatch() public {
         vm.prank(ALM_RELAYER);
-        vm.expectRevert("ForeignController/empty-batch");
-        foreignController.buyMidnight(new Offer[](0), new bytes[](0), new uint256[](0), 1e18);
+        vm.expectRevert("MidnightLib/empty-batch");
+        foreignController.buyMidnight(marketId, new Offer[](0), new bytes[](0), new uint256[](0), 1e18);
     }
 
     function test_buyMidnight_invalidBatchLength() public {
@@ -368,7 +368,7 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
 
         vm.prank(ALM_RELAYER);
         vm.expectRevert("MidnightLib/invalid-batch-length");
-        foreignController.buyMidnight(offers, new bytes[](2), new uint256[](1), 1e18);
+        foreignController.buyMidnight(marketId, offers, new bytes[](2), new uint256[](1), 1e18);
     }
 
     function test_buyMidnight_maxAssetsInNotSet() public {
@@ -395,9 +395,55 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
         Offer memory offer = _offer(false, TICK_98, 1e18);
         offer.market = otherMarket;
 
+        (
+            Offer[] memory offers,
+            bytes[] memory ratifierData,
+            uint256[] memory units
+        ) = _batch(offer, 1e18);
+
         // An unonboarded market has an all zero config, so entry is closed by the same kill switch.
+        vm.prank(ALM_RELAYER);
         vm.expectRevert("MidnightLib/buy-not-enabled");
+        foreignController.buyMidnight(MidnightIdLib.toId(otherMarket), offers, ratifierData, units, 1e18);
+    }
+
+    // The id has to match the offers; an onboarded id cannot lend its config to another market.
+    function test_buyMidnight_marketIdMismatch() public {
+        Market memory otherMarket = market;
+        otherMarket.maturity = market.maturity + 1 days;
+
+        Offer memory offer = _offer(false, TICK_98, 1e18);
+        offer.market = otherMarket;
+
+        vm.expectRevert("MidnightLib/market-mismatch");
         _buy(offer, 1e18, 1e18);
+    }
+
+    // Governance can onboard any id, but entries only go to the configured venue.
+    function test_buyMidnight_invalidMidnight() public {
+        Market memory otherMarket = market;
+        otherMarket.midnight = makeAddr("otherMidnight");
+
+        bytes32 otherId = MidnightIdLib.toId(otherMarket);
+
+        vm.prank(GROVE_EXECUTOR);
+        foreignController.setMidnightMarketConfig(
+            otherId,
+            MidnightLib.MarketConfig(TICK_99, TICK_98, MidnightLib.MAX_CONTINUOUS_FEE, 0)
+        );
+
+        Offer memory offer = _offer(false, TICK_98, 1e18);
+        offer.market = otherMarket;
+
+        (
+            Offer[] memory offers,
+            bytes[] memory ratifierData,
+            uint256[] memory units
+        ) = _batch(offer, 1e18);
+
+        vm.prank(ALM_RELAYER);
+        vm.expectRevert("MidnightLib/invalid-midnight");
+        foreignController.buyMidnight(otherId, offers, ratifierData, units, 1e18);
     }
 
     function test_buyMidnight_marketMismatchInBatch() public {
@@ -415,7 +461,7 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
 
         vm.prank(ALM_RELAYER);
         vm.expectRevert("MidnightLib/market-mismatch");
-        foreignController.buyMidnight(offers, new bytes[](2), units, 10e18);
+        foreignController.buyMidnight(marketId, offers, new bytes[](2), units, 10e18);
     }
 
     function test_buyMidnight_invalidOfferDirection() public {
@@ -503,19 +549,28 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
         Market memory untouched = market;
         untouched.maturity = market.maturity + 1 days;
 
+        bytes32 untouchedId = MidnightIdLib.toId(untouched);
+
         vm.prank(GROVE_EXECUTOR);
         foreignController.setMidnightMarketConfig(
-            untouched,
+            untouchedId,
             MidnightLib.MarketConfig(TICK_99, TICK_98, MidnightLib.MAX_CONTINUOUS_FEE, 0)
         );
 
         Offer memory offer = _offer(false, TICK_98, 1e18);
         offer.market = untouched;
 
-        vm.expectRevert(abi.encodeWithSignature("MarketNotCreated()"));
-        _buy(offer, 1e18, 1e18);
+        (
+            Offer[] memory offers,
+            bytes[] memory ratifierData,
+            uint256[] memory units
+        ) = _batch(offer, 1e18);
 
-        bytes32 untouchedId = midnight.touchMarket(untouched);
+        vm.prank(ALM_RELAYER);
+        vm.expectRevert(abi.encodeWithSignature("MarketNotCreated()"));
+        foreignController.buyMidnight(untouchedId, offers, ratifierData, units, 1e18);
+
+        assertEq(midnight.touchMarket(untouched), untouchedId);
 
         vm.prank(maker);
         harness.supplyCollateral(untouched, 0, 1_000_000e18, maker);
@@ -527,7 +582,11 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
         rateLimits.setRateLimitData(untouchedBuyKey, 5_000_000e18, 0);
 
         // Fees are zero on both markets, so the base market's quote carries over.
-        assertEq(_buy(offer, 1e18, 1e18), _buyerAssets(1e18, TICK_98));
+        vm.prank(ALM_RELAYER);
+        assertEq(
+            foreignController.buyMidnight(untouchedId, offers, ratifierData, units, 1e18),
+            _buyerAssets(1e18, TICK_98)
+        );
     }
 
     function test_buyMidnight_continuousFeeTooHigh() public {
@@ -628,7 +687,7 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
         uint256 expectedAssets = _buyerAssets(units0, TICK_98) + _buyerAssets(units1, TICK_99);
 
         vm.prank(ALM_RELAYER);
-        uint256 assetsSpent = foreignController.buyMidnight(
+        uint256 assetsSpent = foreignController.buyMidnight(marketId, 
             offers, new bytes[](2), units, expectedAssets
         );
 
@@ -651,7 +710,7 @@ contract ForeignControllerMidnightBuyTests is MidnightTestBase {
 
         vm.prank(ALM_RELAYER);
         vm.expectRevert("MidnightLib/buy-price-too-high");
-        foreignController.buyMidnight(offers, new bytes[](2), units, type(uint256).max);
+        foreignController.buyMidnight(marketId, offers, new bytes[](2), units, type(uint256).max);
 
         assertEq(_credit(),                              0);
         assertEq(loanToken.balanceOf(address(almProxy)), 10_000_000e18);
@@ -683,7 +742,7 @@ contract ForeignControllerMidnightSellTests is MidnightTestBase {
             address(this),
             RELAYER
         ));
-        foreignController.sellMidnight(offers, ratifierData, units, 1);
+        foreignController.sellMidnight(marketId, offers, ratifierData, units, 1);
     }
 
     function test_sellMidnight_minAssetsOutNotSet() public {
@@ -691,6 +750,7 @@ contract ForeignControllerMidnightSellTests is MidnightTestBase {
         _sell(_offer(true, TICK_99, 1e18), 1e18, 0);
     }
 
+    // An unonboarded id has an all zero config, so exits from it are closed as well.
     function test_sellMidnight_sellNotEnabled() public {
         Market memory otherMarket = market;
         otherMarket.maturity = market.maturity + 1 days;
@@ -698,8 +758,15 @@ contract ForeignControllerMidnightSellTests is MidnightTestBase {
         Offer memory offer = _offer(true, TICK_99, 1e18);
         offer.market = otherMarket;
 
+        (
+            Offer[] memory offers,
+            bytes[] memory ratifierData,
+            uint256[] memory units
+        ) = _batch(offer, 1e18);
+
+        vm.prank(ALM_RELAYER);
         vm.expectRevert("MidnightLib/sell-not-enabled");
-        _sell(offer, 1e18, 1);
+        foreignController.sellMidnight(MidnightIdLib.toId(otherMarket), offers, ratifierData, units, 1);
     }
 
     function test_sellMidnight_invalidOfferDirection() public {
@@ -826,7 +893,7 @@ contract ForeignControllerMidnightSellTests is MidnightTestBase {
         uint256 balanceBefore = loanToken.balanceOf(address(almProxy));
 
         vm.prank(ALM_RELAYER);
-        uint256 assetsReceived = foreignController.sellMidnight(offers, new bytes[](2), units, expected);
+        uint256 assetsReceived = foreignController.sellMidnight(marketId, offers, new bytes[](2), units, expected);
 
         assertEq(assetsReceived,                             expected);
         assertEq(_credit(),                                  0);
@@ -853,7 +920,7 @@ contract ForeignControllerMidnightSellTests is MidnightTestBase {
         uint256 expected = _sellerAssets(units0, TICK_99) + _sellerAssets(units1, TICK_99);
 
         vm.prank(ALM_RELAYER);
-        uint256 assetsReceived = foreignController.sellMidnight(offers, new bytes[](2), units, expected);
+        uint256 assetsReceived = foreignController.sellMidnight(marketId, offers, new bytes[](2), units, expected);
 
         assertEq(assetsReceived,                             expected);
         assertEq(_credit(),                                  0);
@@ -874,7 +941,7 @@ contract ForeignControllerMidnightSellTests is MidnightTestBase {
         uint256 expected = _sellerAssets(SEEDED_UNITS, TICK_99);
 
         vm.prank(ALM_RELAYER);
-        uint256 assetsReceived = foreignController.sellMidnight(offers, new bytes[](2), units, expected);
+        uint256 assetsReceived = foreignController.sellMidnight(marketId, offers, new bytes[](2), units, expected);
 
         assertEq(assetsReceived, expected);
         assertEq(_credit(),      0);
@@ -929,7 +996,7 @@ contract ForeignControllerMidnightRedeemTests is MidnightTestBase {
             address(this),
             RELAYER
         ));
-        foreignController.redeemMidnight(market, 1e18, 0);
+        foreignController.redeemMidnight(marketId, 1e18, 0);
     }
 
     function test_redeemMidnight_invalidMidnight() public {
@@ -939,13 +1006,13 @@ contract ForeignControllerMidnightRedeemTests is MidnightTestBase {
         // A market on another venue has a different id, so governance never onboarded it.
         vm.prank(ALM_RELAYER);
         vm.expectRevert("ForeignController/market-not-onboarded");
-        foreignController.redeemMidnight(otherMarket, 1e18, 0);
+        foreignController.redeemMidnight(MidnightIdLib.toId(otherMarket), 1e18, 0);
     }
 
     function test_redeemMidnight_zeroUnits() public {
         vm.prank(ALM_RELAYER);
         vm.expectRevert("MidnightLib/zero-units");
-        foreignController.redeemMidnight(market, 1e18, 0);
+        foreignController.redeemMidnight(marketId, 1e18, 0);
     }
 
     function test_redeemMidnight_minAssetsOutNotMet() public {
@@ -954,7 +1021,7 @@ contract ForeignControllerMidnightRedeemTests is MidnightTestBase {
         // Units are clamped to what the pool can serve, so the floor is on the assets actually out.
         vm.prank(ALM_RELAYER);
         vm.expectRevert("MidnightLib/min-assets-out-not-met");
-        foreignController.redeemMidnight(market, SEEDED_UNITS, 100_000e18 + 1);
+        foreignController.redeemMidnight(marketId, SEEDED_UNITS, 100_000e18 + 1);
 
         assertEq(_redeem(SEEDED_UNITS, 100_000e18), 100_000e18);
     }
@@ -967,7 +1034,7 @@ contract ForeignControllerMidnightRedeemTests is MidnightTestBase {
 
         vm.prank(ALM_RELAYER);
         vm.expectRevert("RateLimits/zero-maxAmount");
-        foreignController.redeemMidnight(market, 1e18, 0);
+        foreignController.redeemMidnight(marketId, 1e18, 0);
     }
 
     function test_redeemMidnight_rateLimitBoundary() public {
@@ -978,7 +1045,7 @@ contract ForeignControllerMidnightRedeemTests is MidnightTestBase {
 
         vm.prank(ALM_RELAYER);
         vm.expectRevert("RateLimits/rate-limit-exceeded");
-        foreignController.redeemMidnight(market, 1_000e18, 0);
+        foreignController.redeemMidnight(marketId, 1_000e18, 0);
 
         vm.prank(GROVE_EXECUTOR);
         rateLimits.setRateLimitData(redeemKey, 1_000e18, 0);
@@ -1025,14 +1092,28 @@ contract ForeignControllerMidnightRedeemTests is MidnightTestBase {
         assertEq(_credit(),       0);
     }
 
-    // A market the proxy never traded simply holds no credit.
     function test_redeemMidnight_marketNotOnboarded() public {
         Market memory otherMarket = market;
         otherMarket.maturity = market.maturity + 1 days;
 
         vm.prank(ALM_RELAYER);
         vm.expectRevert("ForeignController/market-not-onboarded");
-        foreignController.redeemMidnight(otherMarket, 1e18, 0);
+        foreignController.redeemMidnight(MidnightIdLib.toId(otherMarket), 1e18, 0);
+    }
+
+    // The library resolves the market from the venue, so an id Midnight never touched cannot redeem.
+    function test_redeemMidnight_marketNotCreated() public {
+        bytes32 unknownId = keccak256("unknown");
+
+        vm.prank(GROVE_EXECUTOR);
+        foreignController.setMidnightMarketConfig(
+            unknownId,
+            MidnightLib.MarketConfig(TICK_99, TICK_98, MidnightLib.MAX_CONTINUOUS_FEE, 0)
+        );
+
+        vm.prank(ALM_RELAYER);
+        vm.expectRevert(abi.encodeWithSignature("MarketNotCreated()"));
+        foreignController.redeemMidnight(unknownId, 1e18, 0);
     }
 
 }
@@ -1341,7 +1422,7 @@ contract ForeignControllerMidnightCallbackTests is MidnightTestBase {
 
         vm.prank(ALM_RELAYER);
         vm.expectRevert(abi.encodeWithSignature("ConsumedUnits()"));
-        foreignController.buyMidnight(offers, new bytes[](2), unitsArray, type(uint256).max);
+        foreignController.buyMidnight(marketId, offers, new bytes[](2), unitsArray, type(uint256).max);
 
         assertEq(_credit(),                                       0);
         assertEq(loanToken.balanceOf(address(almProxy)),           10_000_000e18);
@@ -1473,9 +1554,10 @@ contract ForeignControllerMidnightRepointTests is MidnightTestBase {
         foreignController.setMidnight(makeAddr("midnight2"));
     }
 
-    // Repointing the venue closes entries into the old one but never traps what is already there.
-    function test_midnightRepoint_entriesClosedExitsOpen() public {
-        vm.expectRevert("ForeignController/invalid-midnight");
+    // Repointing the venue closes entries into the old one; sells are authenticated by the id alone
+    // and stay open, while redemption resolves the market through the venue and follows it.
+    function test_midnightRepoint_entriesClosedSellsOpen() public {
+        vm.expectRevert("MidnightLib/invalid-midnight");
         _buy(_offer(false, TICK_98, 1e18), 1e18, 1e18);
 
         uint256 sold     = SEEDED_UNITS / 2;
@@ -1485,23 +1567,24 @@ contract ForeignControllerMidnightRepointTests is MidnightTestBase {
 
         _repay(SEEDED_UNITS - sold);
 
-        assertEq(_redeem(SEEDED_UNITS - sold, SEEDED_UNITS - sold), SEEDED_UNITS - sold);
+        vm.prank(ALM_RELAYER);
+        vm.expectRevert();
+        foreignController.redeemMidnight(marketId, SEEDED_UNITS - sold, 0);
 
-        assertEq(_credit(), 0);
+        assertEq(_credit(), SEEDED_UNITS - sold);
     }
 
-    // The setter only takes markets on the current venue, so the old configs are frozen as they are.
-    function test_midnightRepoint_oldConfigIsFrozen() public {
+    // Configs are keyed by id, so governance can still close or reopen a market on the old venue.
+    function test_midnightRepoint_oldConfigStaysEditable() public {
         vm.prank(GROVE_EXECUTOR);
-        vm.expectRevert("ForeignController/invalid-midnight");
         foreignController.setMidnightMarketConfig(
-            market,
+            marketId,
             MidnightLib.MarketConfig(0, TICK_98, MidnightLib.MAX_CONTINUOUS_FEE, 0)
         );
 
         ( uint16 maxBuyTick, uint16 minSellTick, , ) = foreignController.midnightMarketConfigs(marketId);
 
-        assertEq(maxBuyTick,  TICK_99);
+        assertEq(maxBuyTick,  0);
         assertEq(minSellTick, TICK_98);
     }
 
