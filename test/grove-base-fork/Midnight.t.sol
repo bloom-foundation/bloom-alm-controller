@@ -72,7 +72,7 @@ contract MockOracle {
 
 contract MidnightTestBase is ForkTestBase {
 
-    address constant MIDNIGHT = MIDNIGHT_BASE;
+    address constant MIDNIGHT = 0xAdedD8ab6dE832766Fedf0FaC4992E5C4D3EA18A;
 
     // Both already enabled on the Base singleton at the fork block.
     uint256 constant LLTV               = 0.86e18;
@@ -175,6 +175,8 @@ contract MidnightTestBase is ForkTestBase {
         rateLimits.setRateLimitData(buyKey,    5_000_000 * loanUnit, (1_000_000 * loanUnit) / 1 days);
         rateLimits.setRateLimitData(sellKey,   5_000_000 * loanUnit, (1_000_000 * loanUnit) / 1 days);
         rateLimits.setRateLimitData(redeemKey, 5_000_000 * loanUnit, (1_000_000 * loanUnit) / 1 days);
+
+        foreignController.setMidnight(MIDNIGHT);
 
         foreignController.setMidnightMarketConfig(
             market,
@@ -1454,6 +1456,53 @@ contract ForeignControllerMidnightMidBatchSlashTests is MidnightTestBase {
         assertEq(_credit(),                       creditBefore);
         assertEq(midnight.lossFactor(marketId),   0);
         assertEq(midnight.debt(marketId, victim), VICTIM_UNITS);
+    }
+
+}
+
+contract ForeignControllerMidnightRepointTests is MidnightTestBase {
+
+    uint256 constant SEEDED_UNITS = 1_000_000e18;
+
+    function setUp() public override {
+        super.setUp();
+
+        _seedCredit(SEEDED_UNITS);
+
+        vm.prank(GROVE_EXECUTOR);
+        foreignController.setMidnight(makeAddr("midnight2"));
+    }
+
+    // Repointing the venue closes entries into the old one but never traps what is already there.
+    function test_midnightRepoint_entriesClosedExitsOpen() public {
+        vm.expectRevert("ForeignController/invalid-midnight");
+        _buy(_offer(false, TICK_98, 1e18), 1e18, 1e18);
+
+        uint256 sold     = SEEDED_UNITS / 2;
+        uint256 expected = _sellerAssets(sold, TICK_99);
+
+        assertEq(_sell(_offer(true, TICK_99, uint128(sold)), sold, expected), expected);
+
+        _repay(SEEDED_UNITS - sold);
+
+        assertEq(_redeem(SEEDED_UNITS - sold, SEEDED_UNITS - sold), SEEDED_UNITS - sold);
+
+        assertEq(_credit(), 0);
+    }
+
+    // The setter only takes markets on the current venue, so the old configs are frozen as they are.
+    function test_midnightRepoint_oldConfigIsFrozen() public {
+        vm.prank(GROVE_EXECUTOR);
+        vm.expectRevert("ForeignController/invalid-midnight");
+        foreignController.setMidnightMarketConfig(
+            market,
+            MidnightLib.MarketConfig(0, TICK_98, MidnightLib.MAX_CONTINUOUS_FEE, 0)
+        );
+
+        ( uint16 maxBuyTick, uint16 minSellTick, , ) = foreignController.midnightMarketConfigs(marketId);
+
+        assertEq(maxBuyTick,  TICK_99);
+        assertEq(minSellTick, TICK_98);
     }
 
 }
